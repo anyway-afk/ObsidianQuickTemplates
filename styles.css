@@ -1,0 +1,154 @@
+/* Template list styling */
+.template-list {
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 10px 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+}
+
+.template-item {
+    padding: 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.template-item:last-child {
+    border-bottom: none;
+}
+
+.template-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.template-name {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.template-command {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-bottom: 4px;
+}
+
+.template-preview {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+.template-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.template-actions button {
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.template-actions button:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* Template content textarea */
+.template-content-setting+textarea {
+    width: 100%;
+    font-family: monospace;
+    margin-bottom: 1em;
+    min-height: 150px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+}
+
+/* Suggestion popup styling */
+.suggestion-title {
+    font-weight: bold;
+}
+
+.suggestion-note {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-top: 2px;
+}
+
+.suggestion-content {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* Tooltip styling */
+.template-tooltip {
+    position: absolute;
+    z-index: 1000;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 10px;
+    max-width: 300px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    font-size: 0.9em;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-normal);
+    line-height: 1.5;
+    pointer-events: none;
+    /* Prevent tooltip from interfering with mouse events */
+}
+
+/* Form validation styling */
+.is-invalid {
+    border-color: var(--text-error) !important;
+    background-color: rgba(var(--text-error-rgb), 0.05) !important;
+}
+
+/* Add a subtle shake animation for invalid inputs */
+@keyframes shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    25% {
+        transform: translateX(-5px);
+    }
+
+    75% {
+        transform: translateX(5px);
+    }
+}
+
+.is-invalid:focus {
+    animation: shake 0.3s ease-in-out;
+}
+
+/* Disabled input styling */
+input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--background-secondary) !important;
+    border-color: var(--background-modifier-border) !important;
+}
+
+/* Ensure disabled inputs never show validation errors */
+input:disabled.is-invalid {
+    border-color: var(--background-modifier-border) !important;
+    background-color: var(--background-secondary) !important;
+}
