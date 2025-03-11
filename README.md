@@ -8,7 +8,6 @@ A feature-rich Obsidian plugin for managing text templates. Create, save, update
 - **Insert Template**: Insert templates via command palette, right-click menu, or autocomplete.
 - **Autocomplete**: Type `!!template_name` to quickly insert templates (supports all Unicode characters).
 - **Manage Templates**: Edit or delete your saved templates.
-- **File-based Storage**: Option to store templates as individual files instead of in settings.json.
 - **Template Preview**: Hover over templates to see a preview of their content.
 
 ## How to Use
@@ -39,12 +38,6 @@ There are three ways to insert a template:
    - Edit template content or settings
    - Delete templates
 
-### Storage Options
-
-In the plugin settings, you can choose between:
-
-1. **JSON Storage**: Store templates in Obsidian's settings.json file (default).
-2. **File Storage**: Store templates as individual Markdown files in a templates folder.
 
 ## Installation
 
