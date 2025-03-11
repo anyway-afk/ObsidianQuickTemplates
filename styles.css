@@ -93,23 +93,44 @@
     max-width: 300px;
 }
 
-/* Tooltip styling */
+/* Template tooltip styling improved */
 .template-tooltip {
     position: absolute;
-    z-index: 1000;
+    z-index: 9999;
+    /* Увеличиваем z-index, чтобы убедиться что tooltip выше всех элементов */
     background-color: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
-    padding: 10px;
+    padding: 8px;
     max-width: 300px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
     font-size: 0.9em;
     white-space: pre-wrap;
     word-break: break-word;
-    color: var(--text-normal);
-    line-height: 1.5;
     pointer-events: none;
-    /* Prevent tooltip from interfering with mouse events */
+    animation: tooltip-fade-in 0.2s ease-in-out;
+    transform-origin: left center;
+}
+
+@keyframes tooltip-fade-in {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.tooltip-hidden {
+    display: none !important;
+}
+
+/* Tooltip positioning */
+.tooltip-positioned {
+    /* Positioning will be set via JavaScript for precise positioning */
 }
 
 /* Form validation styling */
@@ -151,4 +172,131 @@ input:disabled {
 input:disabled.is-invalid {
     border-color: var(--background-modifier-border) !important;
     background-color: var(--background-secondary) !important;
+}
+
+/* Usage section styling */
+.usage-section {
+    background-color: var(--background-secondary);
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+}
+
+.usage-section h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    color: var(--text-accent);
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 8px;
+}
+
+.usage-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.usage-card {
+    background-color: var(--background-primary);
+    padding: 16px;
+    border-radius: 6px;
+    border-left: 4px solid var(--interactive-accent);
+}
+
+.usage-card h4 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    color: var(--text-normal);
+}
+
+.usage-card p {
+    margin: 0 0 8px 0;
+    color: var(--text-muted);
+}
+
+.usage-card ul {
+    margin: 0;
+    padding-left: 24px;
+}
+
+.usage-card li {
+    margin-bottom: 4px;
+}
+
+.usage-card li:last-child {
+    margin-bottom: 0;
+}
+
+/* Templates path info styling */
+.templates-path-info {
+    margin-top: 8px;
+    margin-bottom: 16px;
+    font-size: 0.8em;
+    color: var(--text-muted);
+}
+
+.templates-path-info div {
+    margin-bottom: 4px;
+}
+
+.templates-path-info code {
+    word-break: break-all;
+    background-color: var(--background-secondary);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+/* Quick access button */
+.quick-access-button {
+    margin-top: 16px;
+    width: 100%;
+}
+
+/* Usage hint text */
+.usage-hint {
+    margin-bottom: 16px;
+    font-style: italic;
+    color: var(--text-accent);
+}
+
+/* ManageTemplatesModal specific styles */
+.template-list.manage-list {
+    max-height: 400px;
+    overflow: auto;
+    margin: 10px 0;
+}
+
+.template-info {
+    flex-grow: 1;
+}
+
+.template-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.action-button {
+    cursor: pointer;
+}
+
+.template-name-bold {
+    font-weight: bold;
+}
+
+.template-command-muted {
+    color: var(--text-muted);
+}
+
+.template-preview-text {
+    color: var(--text-muted);
+    font-size: 0.8em;
+}
+
+/* Settings visibility control */
+.setting-hidden {
+    display: none;
+}
+
+.setting-visible {
+    display: flex;
 }

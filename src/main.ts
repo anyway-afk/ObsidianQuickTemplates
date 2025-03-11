@@ -15,13 +15,11 @@ import {
     normalizePath
 } from 'obsidian';
 
-// Define EditorPosition type
 interface EditorPosition {
     line: number;
     ch: number;
 }
 
-// Define HTMLElement with style property for TypeScript
 declare global {
     interface HTMLElement {
         style: CSSStyleDeclaration;
@@ -29,6 +27,16 @@ declare global {
 
     interface Element {
         style?: CSSStyleDeclaration;
+    }
+}
+
+declare module 'obsidian' {
+    interface App {
+        commands: {
+            listCommands: () => ObsidianCommand[];
+            removeCommand: (id: string) => void;
+            executeCommandById: (id: string) => void;
+        }
     }
 }
 
@@ -46,8 +54,13 @@ interface QuickTemplatesSettings {
 
 const DEFAULT_SETTINGS: QuickTemplatesSettings = {
     templates: [],
-    useFileStorage: false,
+    useFileStorage: true,
     templatesFolder: 'templates'
+}
+
+interface ObsidianCommand {
+    id: string;
+    name: string;
 }
 
 export default class QuickTemplatesPlugin extends Plugin {
@@ -56,7 +69,22 @@ export default class QuickTemplatesPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
 
-        // Register "Save selection as template" command
+        this.clearAllTooltips();
+
+        try {
+            const templatesPath = normalizePath(this.settings.templatesFolder);
+            const folder = this.app.vault.getAbstractFileByPath(templatesPath);
+
+            if (folder) {
+                await this.validateTemplatesFolder();
+                await this.loadTemplatesFromFiles();
+            } else {
+                await this.ensureTemplatesFolderExists();
+            }
+        } catch (error) {
+            console.error("Error checking templates folder:", error);
+        }
+
         this.addCommand({
             id: 'save-selection-as-template',
             name: 'Save selection as template',
@@ -70,7 +98,6 @@ export default class QuickTemplatesPlugin extends Plugin {
             }
         });
 
-        // Register "Insert template" command
         this.addCommand({
             id: 'insert-template',
             name: 'Insert template',
@@ -79,7 +106,6 @@ export default class QuickTemplatesPlugin extends Plugin {
             }
         });
 
-        // Register "Manage templates" command
         this.addCommand({
             id: 'manage-templates',
             name: 'Manage templates',
@@ -88,16 +114,12 @@ export default class QuickTemplatesPlugin extends Plugin {
             }
         });
 
-        // Wait for Obsidian to be fully loaded before registering template commands
         this.app.workspace.onLayoutReady(() => {
-            // Register custom commands for each template
             this.registerTemplateCommands();
         });
 
-        // Register editor suggest for !!template + Tab
         this.registerEditorSuggest(new TemplateSuggest(this));
 
-        // Add context menu for inserting templates
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
                 menu.addItem((item) => {
@@ -108,7 +130,6 @@ export default class QuickTemplatesPlugin extends Plugin {
                         });
                 });
 
-                // Add "Save selection as template" to context menu
                 const selection = editor.getSelection();
                 if (selection) {
                     menu.addItem((item) => {
@@ -122,48 +143,42 @@ export default class QuickTemplatesPlugin extends Plugin {
             })
         );
 
-        // Add settings tab
         this.addSettingTab(new QuickTemplatesSettingTab(this.app, this));
-
-        // Create templates folder if using file storage
-        if (this.settings.useFileStorage) {
-            this.ensureTemplatesFolderExists();
-        }
     }
 
     onunload() {
-        console.log('Unloading Quick Templates plugin');
+        this.clearAllTooltips();
     }
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
-        // If using file storage, load templates from files
-        if (this.settings.useFileStorage) {
+        this.settings.useFileStorage = true;
+
+        try {
+            await this.validateTemplatesFolder();
+
             await this.loadTemplatesFromFiles();
+        } catch (error) {
+            console.error("Error loading templates:", error);
+            new Notice("Error loading templates. Check console for details.");
         }
     }
 
     async saveSettings() {
-        // If using file storage, save templates to files
-        if (this.settings.useFileStorage) {
+        if (this.settings.templates.length > 0) {
             await this.saveTemplatesToFiles();
-
-            // Save settings without templates to reduce file size
-            const settingsWithoutTemplates = {
-                ...this.settings,
-                templates: [] // Don't store templates in settings.json when using file storage
-            };
-            await this.saveData(settingsWithoutTemplates);
-        } else {
-            await this.saveData(this.settings);
         }
 
-        // Only register commands if the app is fully loaded
+        const settingsWithoutTemplates = {
+            ...this.settings,
+            templates: []
+        };
+        await this.saveData(settingsWithoutTemplates);
+
         if (this.app.workspace.layoutReady) {
             this.registerTemplateCommands();
         } else {
-            // Otherwise, wait for the layout to be ready
             this.app.workspace.onLayoutReady(() => {
                 this.registerTemplateCommands();
             });
@@ -172,25 +187,20 @@ export default class QuickTemplatesPlugin extends Plugin {
 
     registerTemplateCommands() {
         try {
-            // Unregister existing commands
-            // @ts-ignore - commands is a private API
             this.app.commands.listCommands()
-                .filter((cmd: any) => cmd.id.startsWith('quick-templates:template-'))
-                .forEach((cmd: any) => {
-                    // @ts-ignore - commandId is actually a property of the command
+                .filter((cmd: ObsidianCommand) => cmd.id.startsWith('quick-templates:template-'))
+                .forEach((cmd: ObsidianCommand) => {
                     this.app.commands.removeCommand(cmd.id);
                 });
 
             this.settings.templates.forEach(template => {
                 if (!template) return;
 
-                // Всегда используем имя шаблона как команду
-                const commandText = template.name;
+                const templateName = template.name;
 
-                if (!commandText) return;
+                if (!templateName) return;
 
-                // Use a safer way to create command IDs that works with non-Latin characters
-                const commandId = `quick-templates:template-${this.createSafeId(commandText)}`;
+                const commandId = `quick-templates:template-${this.createSafeId(templateName)}`;
 
                 const commandName = `Template: ${template.name}`;
 
@@ -201,113 +211,107 @@ export default class QuickTemplatesPlugin extends Plugin {
                         editorCallback: (editor: Editor) => {
                             if (!editor) return;
 
-                            // Just use the default behavior (insert at cursor)
                             this.insertTemplateContent(editor, template.content);
                         }
                     });
                 } catch (addError) {
-                    console.log(`Failed to add command ${commandId}:`, addError);
                 }
             });
         } catch (error) {
-            console.log('Error in registerTemplateCommands:', error);
         }
     }
 
-    // Helper method to create a safe ID from any string (including non-Latin characters)
     createSafeId(text: string): string {
-        // Convert to base64 to handle any Unicode characters safely
         return btoa(unescape(encodeURIComponent(text)))
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
             .replace(/=+$/, '');
     }
 
-    // Helper method to insert template content with proper Markdown rendering
     insertTemplateContent(editor: Editor, content: string, startPos?: EditorPosition, endPos?: EditorPosition) {
         if (!editor || !content) {
-            console.log('Editor or content is null, cannot insert template');
             return;
         }
 
         try {
             if (startPos && endPos) {
-                // Replace the specified range with the template content
                 editor.replaceRange(content, startPos, endPos);
             } else {
-                // Insert at current cursor position
                 editor.replaceSelection(content);
             }
 
-            // Trigger Obsidian's Markdown processor to render the content
-            // This is a workaround as there's no direct API to force rendering
             try {
                 const cursor = editor.getCursor();
                 if (cursor) {
                     editor.setCursor(cursor);
                 }
             } catch (cursorError) {
-                console.log('Error setting cursor after template insertion:', cursorError);
             }
         } catch (error) {
-            console.log('Error inserting template content:', error);
             new Notice('Failed to insert template. Please try again.');
         }
     }
 
-    // Ensure templates folder exists when using file storage
-    ensureTemplatesFolderExists() {
+    async ensureTemplatesFolderExists() {
         const templatesPath = normalizePath(this.settings.templatesFolder);
 
         try {
-            // Check if folder exists
-            const folderExists = this.app.vault.getAbstractFileByPath(templatesPath) !== null;
+            const existingFolder = this.app.vault.getAbstractFileByPath(templatesPath);
 
-            if (!folderExists) {
-                // Create folder
-                this.app.vault.createFolder(templatesPath).catch(error => {
-                    console.error('Failed to create templates folder:', error);
-                    new Notice('Failed to create templates folder. Reverting to JSON storage.');
-                    this.settings.useFileStorage = false;
-                });
+            if (existingFolder) {
+                return;
+            }
+
+            try {
+                await this.app.vault.createFolder(templatesPath);
+                new Notice(`Templates folder created at ${templatesPath}`);
+            } catch (createError) {
+                if (createError.message && createError.message.includes("already exists")) {
+                    return;
+                }
+                throw createError;
             }
         } catch (error) {
             console.error('Failed to create templates folder:', error);
-            new Notice('Failed to create templates folder. Reverting to JSON storage.');
-            this.settings.useFileStorage = false;
+            new Notice('Failed to create templates folder. Please check file permissions.');
+            throw error;
         }
     }
 
-    // Load templates from files
     async loadTemplatesFromFiles() {
         try {
             const templatesPath = normalizePath(this.settings.templatesFolder);
 
-            // Check if folder exists
             const folder = this.app.vault.getAbstractFileByPath(templatesPath);
             if (!folder) {
+                await this.ensureTemplatesFolderExists();
                 return;
             }
 
-            // Clear existing templates
             this.settings.templates = [];
 
-            // Get all template files
             const files = this.app.vault.getFiles().filter(file =>
                 file.path.startsWith(this.settings.templatesFolder + '/') &&
                 file.extension === 'md'
             );
 
+            if (files.length === 0) {
+                return;
+            }
+
+            let loadedCount = 0;
+            let errorCount = 0;
+
             for (const file of files) {
                 try {
                     const content = await this.app.vault.read(file);
+
                     const metaSection = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
 
                     if (metaSection) {
                         const metaContent = metaSection[1];
                         const templateContent = metaSection[2].trim();
 
-                        // Parse metadata
                         const name = metaContent.match(/name:\s*(.*)/)?.[1]?.trim();
                         const useNameAsCommand = metaContent.match(/useNameAsCommand:\s*(.*)/)?.[1]?.trim() === 'true';
 
@@ -315,88 +319,218 @@ export default class QuickTemplatesPlugin extends Plugin {
                             this.settings.templates.push({
                                 name,
                                 content: templateContent,
-                                useNameAsCommand,
+                                useNameAsCommand: useNameAsCommand !== undefined ? useNameAsCommand : true,
                             });
+                            loadedCount++;
+                        } else {
+                            const fileName = file.basename;
+                            this.settings.templates.push({
+                                name: fileName,
+                                content: templateContent,
+                                useNameAsCommand: useNameAsCommand !== undefined ? useNameAsCommand : true,
+                            });
+                            loadedCount++;
+                        }
+                    } else {
+                        const fileName = file.basename;
+                        this.settings.templates.push({
+                            name: fileName,
+                            content: content.trim(),
+                            useNameAsCommand: true,
+                        });
+                        loadedCount++;
+
+                        try {
+                            const updatedContent = [
+                                '---',
+                                `name: ${fileName}`,
+                                'useNameAsCommand: true',
+                                '---',
+                                '',
+                                content.trim()
+                            ].join('\n');
+
+                            await this.app.vault.modify(file, updatedContent);
+                        } catch (updateError) {
                         }
                     }
                 } catch (error) {
                     console.error(`Failed to load template from file ${file.path}:`, error);
+                    errorCount++;
                 }
             }
+
+            if (loadedCount > 0) {
+                new Notice(`Successfully loaded ${loadedCount} templates`);
+            }
+
+            if (this.settings.templates.length > 0 && this.app.workspace.layoutReady) {
+                this.registerTemplateCommands();
+            }
+
         } catch (error) {
             console.error('Failed to load templates from files:', error);
             new Notice('Failed to load templates from files. Some templates may be missing.');
         }
     }
 
-    // Save templates to files
     async saveTemplatesToFiles() {
         try {
             const templatesPath = normalizePath(this.settings.templatesFolder);
 
-            // Check if folder exists
             const folder = this.app.vault.getAbstractFileByPath(templatesPath);
             if (!folder) {
-                this.ensureTemplatesFolderExists();
+
+                await this.ensureTemplatesFolderExists();
+
+                const checkFolder = this.app.vault.getAbstractFileByPath(templatesPath);
+                if (!checkFolder) {
+                    throw new Error('Templates folder could not be created');
+                }
             }
 
-            // Get existing template files
             const existingFiles = this.app.vault.getFiles().filter(file =>
                 file.path.startsWith(this.settings.templatesFolder + '/') &&
                 file.extension === 'md'
             );
 
-            // Create a map of existing files for quick lookup
+            if (this.settings.templates.length === 0) {
+                return;
+            }
+
             const existingFileMap = new Map();
             existingFiles.forEach(file => {
                 const baseName = file.basename;
                 existingFileMap.set(baseName, file);
             });
 
-            // Process each template
+            let savedCount = 0;
+            let updatedCount = 0;
+            let unchangedCount = 0;
+            let newCount = 0;
+
             for (const template of this.settings.templates) {
-                const safeFileName = this.createSafeFileName(template.name);
-                const filePath = normalizePath(`${this.settings.templatesFolder}/${safeFileName}.md`);
+                try {
+                    if (!template || !template.name) {
+                        continue;
+                    }
 
-                // Create metadata section
-                const metadata = [
-                    '---',
-                    `name: ${template.name}`,
-                    `useNameAsCommand: ${template.useNameAsCommand}`,
-                    '---',
-                    '',
-                    template.content
-                ].join('\n');
+                    const safeFileName = this.createSafeFileName(template.name);
+                    const filePath = normalizePath(`${this.settings.templatesFolder}/${safeFileName}.md`);
 
-                // Check if file exists
-                if (existingFileMap.has(safeFileName)) {
-                    // Update existing file
-                    await this.app.vault.modify(existingFileMap.get(safeFileName), metadata);
-                    existingFileMap.delete(safeFileName);
-                } else {
-                    // Create new file
-                    await this.app.vault.create(filePath, metadata);
+                    const metadata = [
+                        '---',
+                        `name: ${template.name}`,
+                        `useNameAsCommand: ${template.useNameAsCommand}`,
+                        '---',
+                        '',
+                        template.content
+                    ].join('\n');
+
+                    if (existingFileMap.has(safeFileName)) {
+                        const existingFile = existingFileMap.get(safeFileName);
+                        const currentContent = await this.app.vault.read(existingFile);
+
+                        if (currentContent !== metadata) {
+                            await this.app.vault.modify(existingFileMap.get(safeFileName), metadata);
+                            updatedCount++;
+                        } else {
+                            unchangedCount++;
+                        }
+
+                        existingFileMap.delete(safeFileName);
+                        savedCount++;
+                    } else {
+                        await this.app.vault.create(filePath, metadata);
+                        newCount++;
+                        savedCount++;
+                    }
+                } catch (templateError) {
+                    console.error(`Failed to save template "${template.name}":`, templateError);
+                    new Notice(`Failed to save template "${template.name}". Check the console for details.`);
                 }
             }
 
-            // Delete files for templates that no longer exist
-            for (const [_, file] of existingFileMap.entries()) {
-                await this.app.vault.delete(file);
+            if (savedCount > 0) {
+                new Notice(`Saved ${savedCount} templates to ${templatesPath}`);
             }
+
+            let deletedCount = 0;
+            for (const [fileName, file] of existingFileMap.entries()) {
+                try {
+                    await this.app.fileManager.trashFile(file);
+                    deletedCount++;
+                } catch (deleteError) {
+                    console.error(`Failed to delete template file "${file.path}":`, deleteError);
+                }
+            }
+
+            if (deletedCount > 0) {
+                new Notice(`Removed ${deletedCount} obsolete template files`);
+            }
+
         } catch (error) {
             console.error('Failed to save templates to files:', error);
-            new Notice('Failed to save templates to files. Reverting to JSON storage.');
-            this.settings.useFileStorage = false;
-            await this.saveData(this.settings);
+            new Notice('Failed to save templates to files. Please check file permissions.');
         }
     }
 
-    // Create a safe filename from template name
     createSafeFileName(name: string): string {
         return name
-            .replace(/[\\/:*?"<>|]/g, '_') // Replace invalid filename characters
-            .replace(/\s+/g, '_')          // Replace spaces with underscores
-            .substring(0, 100);            // Limit length
+            .replace(/[\\/:*?"<>|]/g, '_')
+            .replace(/\s+/g, '_')
+            .substring(0, 100);
+    }
+
+    clearAllTooltips() {
+        document.querySelectorAll('.template-tooltip').forEach(element => element.remove());
+    }
+
+    async validateTemplatesFolder() {
+        try {
+            const templatesPath = normalizePath(this.settings.templatesFolder);
+
+            const folder = this.app.vault.getAbstractFileByPath(templatesPath);
+            if (!folder) {
+                await this.ensureTemplatesFolderExists();
+                return;
+            }
+
+            if (folder instanceof TFile) {
+                console.error(`Templates path ${templatesPath} is a file, not a folder`);
+                new Notice(`Templates path is a file, not a folder. Please check settings.`);
+                return;
+            }
+
+            const files = this.app.vault.getFiles().filter(file =>
+                file.path.startsWith(templatesPath + '/') &&
+                file.extension === 'md'
+            );
+
+            for (const file of files) {
+                try {
+                    const content = await this.app.vault.read(file);
+
+                    if (content.trim() && !content.match(/^---\n([\s\S]*?)\n---\n/)) {
+                        const fileName = file.basename;
+                        const updatedContent = [
+                            '---',
+                            `name: ${fileName}`,
+                            'useNameAsCommand: true',
+                            '---',
+                            '',
+                            content.trim()
+                        ].join('\n');
+
+                        await this.app.vault.modify(file, updatedContent);
+                    }
+                } catch (error) {
+                    console.error(`Error validating file ${file.path}:`, error);
+                }
+            }
+        } catch (error) {
+            console.error(`Error validating templates folder:`, error);
+        }
     }
 }
 
@@ -424,11 +558,9 @@ class SaveTemplateModal extends Modal {
                 text.setPlaceholder('Template name')
                     .setValue('')
                     .onChange(value => {
-                        // Удаляем обновление customCommand
                     });
             });
 
-        // Double-check to make sure no custom command field exists
         setTimeout(() => {
             const existingCustomCommandSetting = contentEl.querySelector('.custom-command-setting');
             if (existingCustomCommandSetting) {
@@ -448,7 +580,7 @@ class SaveTemplateModal extends Modal {
                             return;
                         }
 
-                        // Всегда используем имя шаблона как команду
+                        // always use the template name as the command
                         await this.saveTemplateToSettings(templateName, '', true);
                     });
             })
@@ -463,23 +595,22 @@ class SaveTemplateModal extends Modal {
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
+
+        this.plugin.clearAllTooltips();
     }
 
     async saveTemplateToSettings(name: string, cmd: string, useNameAsCmd: boolean) {
-        // Check if template with same name exists
         const existingTemplateIndex = this.plugin.settings.templates.findIndex((t: Template) => t.name === name);
         if (existingTemplateIndex >= 0) {
-            // Confirm overwrite
             const confirmModal = new ConfirmModal(
                 this.app,
                 `Template "${name}" already exists. Overwrite?`,
                 async (confirmed) => {
                     if (confirmed) {
-                        // Update existing template
                         this.plugin.settings.templates[existingTemplateIndex] = {
                             name: name,
                             content: this.templateContent,
-                            useNameAsCommand: true, // Всегда true
+                            useNameAsCommand: true,
                         };
                         await this.plugin.saveSettings();
                         new Notice(`Template "${name}" updated`);
@@ -488,11 +619,10 @@ class SaveTemplateModal extends Modal {
                 }
             ).open();
         } else {
-            // Add new template
             this.plugin.settings.templates.push({
                 name: name,
                 content: this.templateContent,
-                useNameAsCommand: true, // Всегда true
+                useNameAsCommand: true,
             });
             await this.plugin.saveSettings();
             new Notice(`Template "${name}" saved`);
@@ -517,95 +647,78 @@ class InsertTemplateModal extends Modal {
 
         if (this.plugin.settings.templates.length === 0) {
             contentEl.createEl('p', { text: 'No templates found. Create a template first.' });
+
+            const checkButton = contentEl.createEl('button', {
+                text: 'Check Templates Folder',
+                cls: 'mod-cta'
+            });
+
+            checkButton.addEventListener('click', async () => {
+                const templatesPath = normalizePath(this.plugin.settings.templatesFolder);
+
+                const folder = this.app.vault.getAbstractFileByPath(templatesPath);
+
+                if (folder) {
+                    new Notice(`Checking templates folder at ${templatesPath}...`);
+                    await this.plugin.loadTemplatesFromFiles();
+
+                    if (this.plugin.settings.templates.length > 0) {
+                        new Notice(`Found ${this.plugin.settings.templates.length} templates.`);
+                        this.close();
+                        new InsertTemplateModal(this.app, this.plugin, this.editor).open();
+                    } else {
+                        new Notice(`No templates found in ${templatesPath}.`);
+                        contentEl.empty();
+                        contentEl.createEl('h2', { text: 'Insert Template' });
+                        contentEl.createEl('p', { text: `No templates found in folder ${templatesPath}.` });
+                        contentEl.createEl('p', { text: 'Please create a template first using "Save selection as template" command.' });
+                    }
+                } else {
+                    await this.plugin.ensureTemplatesFolderExists();
+                    new Notice(`Templates folder created at ${templatesPath}. Please create templates first.`);
+                }
+            });
+
             return;
         }
 
-        // Create a list of templates
         const templateList = contentEl.createEl('div', { cls: 'template-list' });
-
-        // Add some styling
-        templateList.style.maxHeight = '300px';
-        templateList.style.overflow = 'auto';
-        templateList.style.margin = '10px 0';
 
         this.plugin.settings.templates.forEach(template => {
             const templateItem = templateList.createEl('div', { cls: 'template-item' });
-            templateItem.style.padding = '8px';
-            templateItem.style.borderBottom = '1px solid var(--background-modifier-border)';
-            templateItem.style.cursor = 'pointer';
-            templateItem.style.display = 'flex';
-            templateItem.style.justifyContent = 'space-between';
-            templateItem.style.alignItems = 'center';
-            templateItem.setAttribute('aria-label', template.content.length > 100
-                ? template.content.substring(0, 100) + '...'
-                : template.content);
 
-            // Template name
-            const nameEl = templateItem.createEl('div', { text: template.name });
-            nameEl.style.fontWeight = 'bold';
+            const nameEl = templateItem.createEl('div', { text: template.name, cls: 'template-name' });
 
-            // Command info
             const commandInfo = template.name;
-            const commandEl = templateItem.createEl('div', { text: `!!${commandInfo}` });
-            commandEl.style.color = 'var(--text-muted)';
-            commandEl.style.fontSize = '0.8em';
+            const commandEl = templateItem.createEl('div', { text: `!!${commandInfo}`, cls: 'template-command' });
 
-            // Click to insert
             templateItem.addEventListener('click', () => {
-                // Just use the default behavior (insert at cursor)
                 this.plugin.insertTemplateContent(this.editor, template.content);
                 this.close();
             });
 
-            // Hover effect with preview tooltip
             templateItem.addEventListener('mouseenter', () => {
-                templateItem.style.backgroundColor = 'var(--background-modifier-hover)';
+                document.querySelectorAll('.template-tooltip').forEach(element => element.remove());
 
-                // Create tooltip with template preview
                 const tooltip = document.createElement('div');
-                tooltip.classList.add('template-tooltip');
+                tooltip.classList.add('template-tooltip', 'tooltip-positioned');
 
-                // Only show the content once in the tooltip
                 tooltip.textContent = template.content.length > 100
                     ? template.content.substring(0, 100) + '...'
                     : template.content;
 
-                // Position tooltip
-                tooltip.style.position = 'absolute';
-                tooltip.style.zIndex = '1000';
-                tooltip.style.backgroundColor = 'var(--background-primary)';
-                tooltip.style.border = '1px solid var(--background-modifier-border)';
-                tooltip.style.borderRadius = '4px';
-                tooltip.style.padding = '8px';
-                tooltip.style.maxWidth = '300px';
-                tooltip.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                tooltip.style.fontSize = '0.9em';
-                tooltip.style.whiteSpace = 'pre-wrap';
-                tooltip.style.wordBreak = 'break-word';
-
-                // Add tooltip to DOM
                 document.body.appendChild(tooltip);
 
-                // Position tooltip near the template item
                 const rect = templateItem.getBoundingClientRect();
                 tooltip.style.left = `${rect.right + 10}px`;
                 tooltip.style.top = `${rect.top}px`;
 
-                // Store tooltip reference for removal
                 templateItem.dataset.tooltipId = Date.now().toString();
                 tooltip.dataset.tooltipId = templateItem.dataset.tooltipId;
             });
 
             templateItem.addEventListener('mouseleave', () => {
-                templateItem.style.backgroundColor = '';
-
-                // Remove tooltip
-                if (templateItem.dataset.tooltipId) {
-                    const tooltip = document.querySelector(`.template-tooltip[data-tooltip-id="${templateItem.dataset.tooltipId}"]`);
-                    if (tooltip) {
-                        tooltip.remove();
-                    }
-                }
+                this.plugin.clearAllTooltips();
             });
         });
 
@@ -623,10 +736,7 @@ class InsertTemplateModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
 
-        // Clean up any tooltips that might still be in the DOM
-        document.querySelectorAll('.template-tooltip').forEach(tooltip => {
-            tooltip.remove();
-        });
+        this.plugin.clearAllTooltips();
     }
 }
 
@@ -647,42 +757,30 @@ class ManageTemplatesModal extends Modal {
             return;
         }
 
-        // Create a list of templates
-        const templateList = contentEl.createEl('div', { cls: 'template-list' });
-        templateList.style.maxHeight = '400px';
-        templateList.style.overflow = 'auto';
-        templateList.style.margin = '10px 0';
+        const templateList = contentEl.createEl('div', { cls: 'template-list manage-list' });
 
         this.plugin.settings.templates.forEach((template, index) => {
             const templateItem = templateList.createEl('div', { cls: 'template-item' });
-            templateItem.style.padding = '10px';
-            templateItem.style.borderBottom = '1px solid var(--background-modifier-border)';
-            templateItem.style.display = 'flex';
-            templateItem.style.justifyContent = 'space-between';
-            templateItem.style.alignItems = 'center';
 
-            // Template info
-            const infoEl = templateItem.createEl('div');
-            infoEl.createEl('div', { text: template.name, cls: 'template-name' }).style.fontWeight = 'bold';
+            // Template info (name, command, preview)
+            const infoEl = templateItem.createEl('div', { cls: 'template-info' });
+
+            infoEl.createEl('div', { text: template.name, cls: 'template-name template-name-bold' });
 
             const commandInfo = template.name;
-            infoEl.createEl('div', { text: `Command: !!${commandInfo}`, cls: 'template-command' }).style.color = 'var(--text-muted)';
+            infoEl.createEl('div', { text: `Command: !!${commandInfo}`, cls: 'template-command template-command-muted' });
 
-            // Preview of content (first 50 chars)
-            const previewText = template.content.length > 50
-                ? template.content.substring(0, 50) + '...'
+            // Preview of content
+            const previewText = template.content.length > 100
+                ? template.content.substring(0, 100) + '...'
                 : template.content;
-            infoEl.createEl('div', { text: previewText, cls: 'template-preview' }).style.color = 'var(--text-muted)';
-            infoEl.createEl('div', { cls: 'template-preview' }).style.fontSize = '0.8em';
+            infoEl.createEl('div', { text: previewText, cls: 'template-preview template-preview-text' });
 
-            // Actions
+            // Template actions (edit, delete)
             const actionsEl = templateItem.createEl('div', { cls: 'template-actions' });
-            actionsEl.style.display = 'flex';
-            actionsEl.style.gap = '8px';
 
             // Edit button
-            const editBtn = actionsEl.createEl('button', { text: '📝' });
-            editBtn.style.cursor = 'pointer';
+            const editBtn = actionsEl.createEl('button', { text: '✏️', cls: 'action-button' });
             editBtn.addEventListener('click', () => {
                 new EditTemplateModal(this.app, this.plugin, template, index, () => {
                     this.close();
@@ -691,8 +789,7 @@ class ManageTemplatesModal extends Modal {
             });
 
             // Delete button
-            const deleteBtn = actionsEl.createEl('button', { text: '❌' });
-            deleteBtn.style.cursor = 'pointer';
+            const deleteBtn = actionsEl.createEl('button', { text: '❌', cls: 'action-button' });
             deleteBtn.addEventListener('click', () => {
                 new ConfirmModal(
                     this.app,
@@ -723,6 +820,8 @@ class ManageTemplatesModal extends Modal {
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
+
+        this.plugin.clearAllTooltips();
     }
 }
 
@@ -754,7 +853,7 @@ class EditTemplateModal extends Modal {
                 this.nameInput = text.inputEl;
                 text.setValue(this.template.name)
                     .onChange(value => {
-                        // Удаляем обновление customCommand
+                        // Remove the update of customCommand
                     });
             });
 
@@ -768,12 +867,11 @@ class EditTemplateModal extends Modal {
         this.contentTextarea = contentEl.createEl('textarea', {
             attr: {
                 rows: '10',
-                style: 'width: 100%; font-family: monospace; margin-bottom: 1em;'
+                class: 'template-content-textarea'
             }
         });
         this.contentTextarea.value = this.template.content;
 
-        // Double-check to make sure no custom command field exists
         setTimeout(() => {
             const existingCustomCommandSetting = contentEl.querySelector('.custom-command-setting');
             if (existingCustomCommandSetting) {
@@ -793,7 +891,6 @@ class EditTemplateModal extends Modal {
                             return;
                         }
 
-                        // Всегда используем имя шаблона как команду
                         await this.saveTemplateToSettings(templateName, '', true);
                     });
             })
@@ -808,10 +905,11 @@ class EditTemplateModal extends Modal {
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
+
+        this.plugin.clearAllTooltips();
     }
 
     async saveTemplateToSettings(name: string, cmd: string, useNameAsCmd: boolean) {
-        // Check if template with same name exists (excluding current template)
         const existingTemplateIndex = this.plugin.settings.templates.findIndex(
             (t: Template, idx: number) => t.name === name && idx !== this.templateIndex
         );
@@ -825,7 +923,7 @@ class EditTemplateModal extends Modal {
         this.plugin.settings.templates[this.templateIndex] = {
             name: name,
             content: this.contentTextarea.value,
-            useNameAsCommand: true, // Всегда true
+            useNameAsCommand: true,
         };
 
         await this.plugin.saveSettings();
@@ -888,7 +986,6 @@ class TemplateSuggest extends EditorSuggest<Template> {
             return null;
         }
 
-        // Don't trigger if we're in the middle of inserting a template
         if (this.isInserting) return null;
 
         try {
@@ -897,7 +994,6 @@ class TemplateSuggest extends EditorSuggest<Template> {
 
             const subString = line.substring(0, cursor.ch);
 
-            // Updated regex to support all Unicode characters (including non-Latin)
             const match = subString.match(/!!([^\s]*)$/u);
             if (!match) return null;
 
@@ -910,7 +1006,6 @@ class TemplateSuggest extends EditorSuggest<Template> {
                 query: match[1],
             };
         } catch (error) {
-            console.log('Error in TemplateSuggest.onTrigger:', error);
             return null;
         }
     }
@@ -921,7 +1016,6 @@ class TemplateSuggest extends EditorSuggest<Template> {
         try {
             const query = context.query.toLowerCase();
 
-            // If query is empty, return all templates
             if (!query) {
                 return this.plugin.settings.templates || [];
             }
@@ -933,7 +1027,6 @@ class TemplateSuggest extends EditorSuggest<Template> {
                 return nameMatch;
             });
         } catch (error) {
-            console.log('Error in TemplateSuggest.getSuggestions:', error);
             return [];
         }
     }
@@ -947,13 +1040,11 @@ class TemplateSuggest extends EditorSuggest<Template> {
             const commandInfo = template.name;
             el.createEl('div', { text: `!!${commandInfo}`, cls: 'suggestion-note' });
 
-            // Preview of content (first 100 chars instead of 50)
             const previewText = template.content.length > 100
                 ? template.content.substring(0, 100) + '...'
                 : template.content;
             el.createEl('div', { text: previewText, cls: 'suggestion-content' });
         } catch (error) {
-            console.log('Error in TemplateSuggest.renderSuggestion:', error);
         }
     }
 
@@ -961,32 +1052,26 @@ class TemplateSuggest extends EditorSuggest<Template> {
         if (!template) return;
 
         try {
-            if (this.context && this.context.editor) {
-                const editor = this.context.editor;
-                const startPos = this.context.start;
-                const endPos = this.context.end;
+            if (!this.context) return;
 
-                if (!editor || !startPos || !endPos) {
-                    console.log('Missing editor or position information');
-                    return;
-                }
+            const editor = this.context.editor;
+            const startPos = this.context.start;
+            const endPos = this.context.end;
 
-                // Set flag to prevent re-triggering during insertion
-                this.isInserting = true;
-
-                // Replace the template command with the template content
-                editor.replaceRange(template.content, startPos, endPos);
-
-                // Reset the flag after a short delay
-                setTimeout(() => {
-                    this.isInserting = false;
-                }, 100);
-
-                // Close the suggestion popup
-                this.close();
+            if (!editor || !startPos || !endPos) {
+                return;
             }
+
+            this.isInserting = true;
+
+            editor.replaceRange(template.content, startPos, endPos);
+
+            setTimeout(() => {
+                this.isInserting = false;
+            }, 100);
+
+            this.close();
         } catch (error) {
-            console.log('Error in TemplateSuggest.selectSuggestion:', error);
             this.isInserting = false;
         }
     }
@@ -1009,29 +1094,10 @@ class QuickTemplatesSettingTab extends PluginSettingTab {
         // Storage settings
         containerEl.createEl('h3', { text: 'Storage Settings' });
 
-        new Setting(containerEl)
-            .setName('Use file-based storage')
-            .setDesc('Store templates as individual files in a templates folder instead of in settings.json')
-            .addToggle(toggle => {
-                toggle.setValue(this.plugin.settings.useFileStorage)
-                    .onChange(async (value) => {
-                        this.plugin.settings.useFileStorage = value;
-
-                        // Show/hide templates folder setting based on toggle
-                        const folderSetting = containerEl.querySelector('.templates-folder-setting') as HTMLElement;
-                        if (folderSetting) {
-                            folderSetting.style.display = value ? 'flex' : 'none';
-                        }
-
-                        await this.plugin.saveSettings();
-                    });
-            });
-
-        // Templates folder setting
+        // Templates folder setting - without the ability to disable file storage
         const templatesFolderSetting = new Setting(containerEl)
             .setName('Templates folder')
-            .setDesc('Folder where template files will be stored (relative to Obsidian config folder)')
-            .setClass('templates-folder-setting')
+            .setDesc('Folder where template files will be stored (relative to Obsidian vault folder)')
             .addText(text => {
                 text.setValue(this.plugin.settings.templatesFolder)
                     .onChange(async (value) => {
@@ -1044,209 +1110,124 @@ class QuickTemplatesSettingTab extends PluginSettingTab {
             .addButton(button => {
                 button.setButtonText('Open Folder')
                     .setTooltip('Open templates folder in Obsidian')
-                    .onClick(() => {
-                        // Get the full path to the templates folder
+                    .onClick(async () => {
                         const templatesPath = normalizePath(this.plugin.settings.templatesFolder);
 
-                        // Try to open the folder in Obsidian
                         const folder = this.app.vault.getAbstractFileByPath(templatesPath);
                         if (folder) {
-                            // If the folder exists, open it in a new leaf
                             this.app.workspace.getLeaf().openFile(folder as any);
                         } else {
-                            // If the folder doesn't exist, try to create it
-                            this.plugin.ensureTemplatesFolderExists();
-                            new Notice(`Templates folder created at: ${templatesPath}`);
+                            try {
+                                await this.plugin.ensureTemplatesFolderExists();
+                                new Notice(`Templates folder created at: ${templatesPath}`);
+                            } catch (error) {
+                                new Notice('Failed to create templates folder.');
+                            }
                         }
                     });
             });
 
-        // Add information about the full path to the templates folder
-        if (this.plugin.settings.useFileStorage) {
-            // Используем более безопасный способ отображения пути
-            const templatesPath = normalizePath(this.plugin.settings.templatesFolder);
+        const templatesPath = normalizePath(this.plugin.settings.templatesFolder);
+        const pathInfo = containerEl.createEl('div', {
+            cls: 'templates-path-info'
+        });
 
-            const pathInfo = containerEl.createEl('div', {
-                cls: 'templates-path-info',
-                attr: {
-                    style: 'margin-top: 8px; margin-bottom: 16px; font-size: 0.8em; color: var(--text-muted);'
-                }
-            });
+        pathInfo.createEl('div', { text: 'Templates folder location:' });
 
-            pathInfo.createEl('div', {
-                text: 'Templates folder location:',
-                attr: {
-                    style: 'margin-bottom: 4px;'
-                }
-            });
-
-            pathInfo.createEl('code', {
-                text: `${templatesPath} (relative to your vault root)`,
-                attr: {
-                    style: 'word-break: break-all; background-color: var(--background-secondary); padding: 4px 8px; border-radius: 4px;'
-                }
-            });
-        }
-
-        // Hide templates folder setting if not using file storage
-        if (!this.plugin.settings.useFileStorage) {
-            templatesFolderSetting.settingEl.style.display = 'none';
-        }
+        pathInfo.createEl('code', {
+            text: `${templatesPath} (relative to your vault root)`
+        });
 
         containerEl.createEl('p', {
             text: 'Use the "Manage templates" command to create, edit, and delete templates.',
-            attr: {
-                style: 'margin-bottom: 16px; font-style: italic; color: var(--text-accent);'
-            }
+            cls: 'usage-hint'
         });
 
-        // Улучшенный раздел Usage
         const usageSection = containerEl.createEl('div', {
-            cls: 'usage-section',
-            attr: {
-                style: 'background-color: var(--background-secondary); padding: 16px; border-radius: 8px; margin-bottom: 24px;'
-            }
+            cls: 'usage-section'
         });
 
         usageSection.createEl('h3', {
-            text: 'How to Use Quick Templates',
-            attr: {
-                style: 'margin-top: 0; margin-bottom: 16px; color: var(--text-accent); border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 8px;'
-            }
+            text: 'How to Use Quick Templates'
         });
 
-        // Создаем карточки для каждого пункта использования
+        // Create cards for each usage item
         const usageCards = usageSection.createEl('div', {
-            cls: 'usage-cards',
-            attr: {
-                style: 'display: flex; flex-direction: column; gap: 16px;'
-            }
+            cls: 'usage-cards'
         });
 
-        // Карточка 1: Save selection as template
+        // Card 1: Save selection as template
         const saveCard = usageCards.createEl('div', {
-            cls: 'usage-card',
-            attr: {
-                style: 'background-color: var(--background-primary); padding: 16px; border-radius: 6px; border-left: 4px solid var(--interactive-accent);'
-            }
+            cls: 'usage-card'
         });
 
         saveCard.createEl('h4', {
-            text: '📝 Save selection as template',
-            attr: {
-                style: 'margin-top: 0; margin-bottom: 8px; color: var(--text-normal);'
-            }
+            text: '📝 Save selection as template'
         });
 
         saveCard.createEl('p', {
-            text: 'Select text in your note and use:',
-            attr: {
-                style: 'margin: 0 0 8px 0; color: var(--text-muted);'
-            }
+            text: 'Select text in your note and use:'
         });
 
-        const saveSteps = saveCard.createEl('ul', {
-            attr: {
-                style: 'margin: 0; padding-left: 24px;'
-            }
-        });
+        const saveSteps = saveCard.createEl('ul');
 
         saveSteps.createEl('li', {
-            text: 'Command palette (Ctrl/Cmd+P) → "Save selection as template"',
-            attr: {
-                style: 'margin-bottom: 4px;'
-            }
+            text: 'Command palette (Ctrl/Cmd+P) → "Save selection as template"'
         });
 
         saveSteps.createEl('li', {
             text: 'Right-click menu → "Save selection as template"'
         });
 
-        // Карточка 2: Insert template
+        // Card 2: Insert template
         const insertCard = usageCards.createEl('div', {
-            cls: 'usage-card',
-            attr: {
-                style: 'background-color: var(--background-primary); padding: 16px; border-radius: 6px; border-left: 4px solid var(--interactive-accent);'
-            }
+            cls: 'usage-card'
         });
 
         insertCard.createEl('h4', {
-            text: '📋 Insert template',
-            attr: {
-                style: 'margin-top: 0; margin-bottom: 8px; color: var(--text-normal);'
-            }
+            text: '📋 Insert template'
         });
 
         insertCard.createEl('p', {
-            text: 'Insert your saved templates using:',
-            attr: {
-                style: 'margin: 0 0 8px 0; color: var(--text-muted);'
-            }
+            text: 'Insert your saved templates using:'
         });
 
-        const insertSteps = insertCard.createEl('ul', {
-            attr: {
-                style: 'margin: 0; padding-left: 24px;'
-            }
+        const insertSteps = insertCard.createEl('ul');
+
+        insertSteps.createEl('li', {
+            text: 'Command palette → "Insert template"'
         });
 
         insertSteps.createEl('li', {
-            text: 'Command palette → "Insert template"',
-            attr: {
-                style: 'margin-bottom: 4px;'
-            }
-        });
-
-        insertSteps.createEl('li', {
-            text: 'Right-click menu → "Insert template"',
-            attr: {
-                style: 'margin-bottom: 4px;'
-            }
+            text: 'Right-click menu → "Insert template"'
         });
 
         insertSteps.createEl('li', {
             text: 'Type !! followed by your template name (autocomplete will appear)'
         });
 
-        // Карточка 3: Manage templates
+        // Card 3: Manage templates
         const manageCard = usageCards.createEl('div', {
-            cls: 'usage-card',
-            attr: {
-                style: 'background-color: var(--background-primary); padding: 16px; border-radius: 6px; border-left: 4px solid var(--interactive-accent);'
-            }
+            cls: 'usage-card'
         });
 
         manageCard.createEl('h4', {
-            text: '⚙️ Manage templates',
-            attr: {
-                style: 'margin-top: 0; margin-bottom: 8px; color: var(--text-normal);'
-            }
+            text: '⚙️ Manage templates'
         });
 
         manageCard.createEl('p', {
-            text: 'Edit or delete your templates:',
-            attr: {
-                style: 'margin: 0 0 8px 0; color: var(--text-muted);'
-            }
+            text: 'Edit or delete your templates:'
         });
 
-        const manageSteps = manageCard.createEl('ul', {
-            attr: {
-                style: 'margin: 0; padding-left: 24px;'
-            }
-        });
+        const manageSteps = manageCard.createEl('ul');
 
         manageSteps.createEl('li', {
             text: 'Command palette → "Manage templates"'
         });
 
-        // Кнопка для быстрого доступа к управлению шаблонами
         const quickAccessButton = usageSection.createEl('button', {
-            text: '🚀 Open Template Manager',
-            cls: 'mod-cta',
-            attr: {
-                style: 'margin-top: 16px; width: 100%;'
-            }
+            text: 'Open Template Manager',
+            cls: 'mod-cta quick-access-button'
         });
 
         quickAccessButton.addEventListener('click', () => {

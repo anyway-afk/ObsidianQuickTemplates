@@ -3,7 +3,7 @@ node_modules/
 
 # Build files
 *.js.map
-main.js 
+main.js
 
 # IDE files
 .idea/
